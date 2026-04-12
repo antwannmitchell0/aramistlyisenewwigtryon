@@ -9,6 +9,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet" />
 
+  <!-- MediaPipe FaceMesh for real AI face detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1632090844/camera_utils.js" crossorigin="anonymous"></script>
+
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1120,6 +1124,34 @@
       .footer-top { grid-template-columns: 1fr; }
     }
 
+    /* ─── TRY-ON APP MOBILE LAYOUT ─── */
+    @media (max-width: 768px) {
+      /* Override the inline grid so columns stack vertically */
+      #tryonApp > div > div:first-child,
+      #tryonApp > div { display: flex !important; flex-direction: column !important; }
+      /* Wig selector: horizontal scrollable strip instead of fixed 280px sidebar */
+      #tryon-sidebar {
+        width: 100% !important;
+        border-right: none !important;
+        border-bottom: 1px solid rgba(201,150,58,0.15) !important;
+        flex-direction: column !important;
+      }
+      #wigGrid {
+        display: flex !important;
+        flex-direction: row !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        max-height: 130px !important;
+        padding: 0.5rem !important;
+        gap: 8px !important;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(201,150,58,0.3) transparent;
+      }
+      #wigGrid > div { min-width: 80px !important; flex-shrink: 0 !important; }
+      /* Canvas / camera area takes full width */
+      #tryonCanvas { width: 100% !important; }
+    }
+
     /* ─── ANIMATIONS ─── */
     @keyframes fadeUp {
       from { opacity: 0; transform: translateY(24px); }
@@ -1319,7 +1351,7 @@
         <div style="display:grid;grid-template-columns:280px 1fr;min-height:600px;">
 
           <!-- ── LEFT: Wig Selector (always visible) ── -->
-          <div style="background:rgba(0,0,0,0.5);border-right:1px solid rgba(201,150,58,0.15);display:flex;flex-direction:column;">
+          <div id="tryon-sidebar" style="background:rgba(0,0,0,0.5);border-right:1px solid rgba(201,150,58,0.15);display:flex;flex-direction:column;">
 
             <div style="padding:1rem;border-bottom:1px solid rgba(201,150,58,0.12);">
               <p style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,255,255,0.4);margin:0 0 8px;">Step 1 — Pick a style</p>
@@ -1368,7 +1400,7 @@
             <div id="cameraErrorBox" style="display:none;background:rgba(201,150,58,0.08);border-bottom:1px solid rgba(201,150,58,0.2);padding:0.875rem 1.25rem;"></div>
 
             <!-- Viewer: idle / camera / photo -->
-            <div style="flex:1;position:relative;background:#000;display:flex;align-items:center;justify-content:center;min-height:400px;">
+            <div id="tryonViewer" style="flex:1;position:relative;background:#000;display:flex;align-items:center;justify-content:center;min-height:400px;">
 
               <!-- Idle state (no camera, no photo) -->
               <div id="idleState" style="text-align:center;padding:2rem;">
@@ -1376,26 +1408,27 @@
                 <p style="font-size:13px;color:rgba(255,255,255,0.35);font-weight:300;margin:0;">← Pick a wig style, then use your camera or upload a photo</p>
               </div>
 
-              <!-- Video feed -->
-              <video id="tryonVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:none;position:absolute;inset:0;"></video>
+              <!-- Hidden video used as texture source for canvas (not shown directly) -->
+              <video id="tryonVideo" autoplay playsinline muted style="display:none;position:absolute;width:1px;height:1px;"></video>
 
-              <!-- Uploaded photo -->
-              <img id="uploadedPhoto" style="width:100%;height:100%;object-fit:contain;display:none;position:absolute;inset:0;" />
+              <!-- Hidden photo used as texture source for canvas (not shown directly) -->
+              <img id="uploadedPhoto" style="display:none;position:absolute;width:1px;height:1px;" crossorigin="anonymous" />
 
-              <!-- Face guide -->
-              <div id="faceGuide" style="position:absolute;inset:0;display:none;align-items:center;justify-content:flex-start;padding-top:8%;pointer-events:none;">
+              <!-- Canvas: single visual output compositing video/photo + wig overlay -->
+              <canvas id="tryonCanvas" style="width:100%;height:100%;object-fit:cover;display:none;position:absolute;inset:0;"></canvas>
+
+              <!-- Face guide overlay (shown while aligning) -->
+              <div id="faceGuide" style="position:absolute;inset:0;display:none;align-items:center;justify-content:flex-start;padding-top:8%;pointer-events:none;z-index:2;">
                 <div style="width:160px;height:210px;border:2px dashed rgba(201,150,58,0.5);border-radius:50%;position:relative;">
                   <div style="position:absolute;top:-22px;left:50%;transform:translateX(-50%);font-size:10px;color:rgba(201,150,58,0.7);letter-spacing:0.1em;text-transform:uppercase;white-space:nowrap;">Align your face here</div>
                 </div>
               </div>
 
-              <!-- Wig overlay -->
-              <div id="wigOverlay" style="position:absolute;inset:0;pointer-events:none;display:none;">
-                <div id="wigOverlayInner" style="position:absolute;top:0;left:50%;transform:translateX(-50%);transition:all 0.3s;opacity:0.85;"></div>
-              </div>
+              <!-- AI loading indicator -->
+              <div id="aiLoadingMsg" style="display:none;position:absolute;bottom:3.5rem;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);border:1px solid rgba(201,150,58,0.4);color:rgba(201,150,58,0.9);padding:5px 14px;border-radius:20px;font-size:11px;font-family:var(--sans);white-space:nowrap;z-index:3;">Loading AI face detection…</div>
 
               <!-- Active wig label + save button -->
-              <div style="position:absolute;bottom:1rem;left:1rem;right:1rem;display:flex;justify-content:space-between;align-items:center;">
+              <div style="position:absolute;bottom:1rem;left:1rem;right:1rem;display:flex;justify-content:space-between;align-items:center;z-index:3;">
                 <div id="activeWigLabel" style="display:none;background:rgba(0,0,0,0.75);border:1px solid rgba(201,150,58,0.4);color:var(--gold);padding:5px 12px;border-radius:20px;font-size:11px;font-family:var(--sans);"></div>
                 <button onclick="captureScreenshot()" id="saveBtn" style="display:none;background:var(--gold);border:none;color:white;padding:8px 14px;border-radius:4px;font-size:11px;cursor:pointer;font-family:var(--sans);font-weight:600;margin-left:auto;">📸 Save Look</button>
               </div>
